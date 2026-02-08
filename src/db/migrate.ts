@@ -35,7 +35,14 @@ CREATE TABLE IF NOT EXISTS settings (
 ];
 
 export async function migrate(databaseUrl: string) {
-  const client = new Client({ connectionString: databaseUrl });
+  const sslNeeded =
+    (process.env.NODE_ENV || '').toLowerCase() === 'production' ||
+    /sslmode=/i.test(databaseUrl);
+
+  const client = new Client({
+    connectionString: databaseUrl,
+    ...(sslNeeded ? { ssl: { rejectUnauthorized: false } } : {}),
+  });
   await client.connect();
 
   try {

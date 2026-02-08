@@ -21,7 +21,16 @@ export class Repo {
   private pool: Pool;
 
   constructor(databaseUrl: string) {
-    this.pool = new Pool({ connectionString: databaseUrl });
+    // Render Postgres typically requires SSL. Internal URLs may still enforce it.
+    // We enable SSL when running in production or when sslmode is present.
+    const sslNeeded =
+      (process.env.NODE_ENV || '').toLowerCase() === 'production' ||
+      /sslmode=/i.test(databaseUrl);
+
+    this.pool = new Pool({
+      connectionString: databaseUrl,
+      ...(sslNeeded ? { ssl: { rejectUnauthorized: false } } : {}),
+    });
   }
 
   async ensureUser(id: string, appleSub?: string | null) {
