@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { migrate } from './db/migrate.js';
 import { Repo } from './db/repo.js';
 import { verifyAppleIdentityToken } from './auth/apple.js';
-import { alertsEvaluate } from './services/mcpBridge.js';
+import { evaluateAlerts as alertsEvaluate } from './services/alerts.js';
 
 const env = {
   PORT: Number(process.env.PORT || 3000),
@@ -116,8 +116,8 @@ app.post('/v1/alerts/run-batch', async (req) => {
   for (const symbol of w.symbols) {
     const out = await alertsEvaluate({
       venue: w.venue,
-      symbol,
-      timeframes: w.timeframes,
+      symbol: symbol as any,
+      timeframes: w.timeframes as any,
       settings,
       thresholds,
       lookbackCross,
