@@ -53,11 +53,15 @@ export class Repo {
     const r = await this.pool.query('SELECT user_id, venue, symbols, timeframes FROM watchlists WHERE user_id=$1', [userId]);
     if (r.rowCount === 0) return null;
     const row = r.rows[0];
+
+    const symbols = typeof row.symbols === 'string' ? JSON.parse(row.symbols) : row.symbols;
+    const timeframes = typeof row.timeframes === 'string' ? JSON.parse(row.timeframes) : row.timeframes;
+
     return {
       userId: row.user_id,
       venue: row.venue,
-      symbols: row.symbols,
-      timeframes: row.timeframes,
+      symbols: Array.isArray(symbols) ? symbols : [],
+      timeframes: Array.isArray(timeframes) ? timeframes : ['1D', '1W', '1M'],
     };
   }
 
@@ -74,10 +78,14 @@ export class Repo {
     const r = await this.pool.query('SELECT user_id, macd, thresholds, lookback_cross FROM settings WHERE user_id=$1', [userId]);
     if (r.rowCount === 0) return null;
     const row = r.rows[0];
+
+    const macd = typeof row.macd === 'string' ? JSON.parse(row.macd) : row.macd;
+    const thresholds = typeof row.thresholds === 'string' ? JSON.parse(row.thresholds) : row.thresholds;
+
     return {
       userId: row.user_id,
-      macd: row.macd,
-      thresholds: row.thresholds,
+      macd,
+      thresholds,
       lookbackCross: row.lookback_cross,
     };
   }
