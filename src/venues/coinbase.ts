@@ -1,16 +1,21 @@
 import type { Candle } from './types.js';
 
 // Coinbase Exchange candles endpoint supports granularity up to 1D.
-// We'll fetch daily candles and resample to 1W / 1M.
+// IMPORTANT: Coinbase caps the number of returned candles (~300) for a given time range.
+// So for large limits we page backwards in time.
 
-export async function fetchCoinbaseDailyCandles(product: string, limit: number): Promise<Candle[]> {
-  // Coinbase returns newest-first: [ time, low, high, open, close, volume ]
-  const end = new Date();
-  const start = new Date(end.getTime() - (limit + 5) * 24 * 60 * 60 * 1000);
-  const url = new URL(`https://api.exchange.coinbase.com/products/${encodeURIComponent(product)}/candles`);
+const MAX_CANDLES_PER_REQUEST = 300;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+async function fetchCoinbaseDailyCandlesPage(params: {
+  product: string;
+  start: Date;
+  end: Date;
+}): Promise<Candle[]> {
+  const url = new URL(`https://api.exchange.coinbase.com/products/${encodeURIComponent(params.product)}/candles`);
   url.searchParams.set('granularity', '86400');
-  url.searchParams.set('start', start.toISOString());
-  url.searchParams.set('end', end.toISOString());
+  url.searchParams.set('start', params.start.toISOString());
+  url.searchParams.set('end', params.end.toISOString());
 
   const r = await fetch(url.toString(), {
     headers: {
@@ -25,7 +30,7 @@ export async function fetchCoinbaseDailyCandles(product: string, limit: number):
   const data = (await r.json()) as any[];
   if (!Array.isArray(data)) throw new Error('coinbase candles: bad response');
 
-  const candles = data
+  return data
     .map(row => ({
       time: new Date(row[0] * 1000).toISOString(),
       low: Number(row[1]),
@@ -34,9 +39,44 @@ export async function fetchCoinbaseDailyCandles(product: string, limit: number):
       close: Number(row[4]),
       volume: Number(row[5]),
     }))
+    // Coinbase returns newest-first
     .reverse();
+}
 
-  return candles.slice(-limit);
+export async function fetchCoinbaseDailyCandles(product: string, limit: number): Promise<Candle[]> {
+  const need = Math.min(Math.max(limit, 1), 2000); // internal safety cap
+
+  // Page backwards until we have enough.
+  let end = new Date();
+  const out: Candle[] = [];
+  const seen = new Set<string>();
+
+  while (out.length < need) {
+    const remaining = need - out.length;
+    // Request at most 300 candles; add a small buffer.
+    const pageSize = Math.min(MAX_CANDLES_PER_REQUEST, Math.max(50, remaining + 5));
+    const start = new Date(end.getTime() - pageSize * DAY_MS);
+
+    const page = await fetchCoinbaseDailyCandlesPage({ product, start, end });
+    if (page.length === 0) break;
+
+    for (const c of page) {
+      if (seen.has(c.time)) continue;
+      seen.add(c.time);
+      out.push(c);
+    }
+
+    // Move the window back to just before the earliest candle in this page.
+    const earliest = page[0];
+    end = new Date(new Date(earliest.time).getTime() - 1000);
+
+    // If Coinbase returned fewer than requested, we've probably hit the beginning.
+    if (page.length < 10) break;
+  }
+
+  // Ensure chronological order and take the most recent N.
+  out.sort((a, b) => a.time.localeCompare(b.time));
+  return out.slice(-need);
 }
 
 function startOfWeekUtc(d: Date): Date {
