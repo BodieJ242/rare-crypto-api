@@ -14,10 +14,10 @@ const env = {
   DATABASE_URL: process.env.DATABASE_URL || '',
   JWT_SECRET: process.env.JWT_SECRET || '',
   JWT_ISSUER: process.env.JWT_ISSUER || 'rare-crypto-api',
-  JWT_AUDIENCE: process.env.JWT_AUDIENCE || 'co.rarecrypto.app',
+  JWT_AUDIENCE: process.env.JWT_AUDIENCE || 'co.rarecrypto.rarecrypto',
   JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '1h',
   ENABLE_AUTH_DEV: String(process.env.ENABLE_AUTH_DEV || 'true').toLowerCase() === 'true',
-  APPLE_AUDIENCE_IOS: process.env.APPLE_AUDIENCE_IOS || 'co.rarecrypto.app',
+  APPLE_AUDIENCE_IOS: process.env.APPLE_AUDIENCE_IOS || 'co.rarecrypto.rarecrypto',
   APPLE_ISSUER: process.env.APPLE_ISSUER || 'https://appleid.apple.com',
 };
 
