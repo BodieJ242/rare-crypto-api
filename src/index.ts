@@ -101,6 +101,42 @@ app.post('/v1/watchlist/set', async (req) => {
   return { ok: true };
 });
 
+app.get('/v1/settings/get', async (req) => {
+  const uid = (req as any).user.uid;
+  const s = await repo.getSettings(uid);
+  return (
+    s ?? {
+      userId: uid,
+      macd: { fast: 12, slow: 26, signal: 9 },
+      thresholds: { great: 2, rare: 3 },
+      lookbackCross: 3,
+    }
+  );
+});
+
+app.post('/v1/settings/set', async (req) => {
+  const uid = (req as any).user.uid;
+
+  const body = z
+    .object({
+      macd: z.object({ fast: z.number().int().min(1).max(200), slow: z.number().int().min(2).max(400), signal: z.number().int().min(1).max(200) }).optional(),
+      thresholds: z.object({ great: z.number().int().min(1).max(6), rare: z.number().int().min(1).max(6) }).optional(),
+      lookbackCross: z.number().int().min(1).max(30).optional(),
+    })
+    .parse((req as any).body ?? {});
+
+  const prev = await repo.getSettings(uid);
+  const next = {
+    userId: uid,
+    macd: body.macd ?? prev?.macd ?? { fast: 12, slow: 26, signal: 9 },
+    thresholds: body.thresholds ?? prev?.thresholds ?? { great: 2, rare: 3 },
+    lookbackCross: body.lookbackCross ?? prev?.lookbackCross ?? 3,
+  };
+
+  await repo.upsertSettings(next);
+  return { ok: true, settings: next };
+});
+
 app.post('/v1/alerts/run-batch', async (req) => {
   const uid = (req as any).user.uid;
   const w = await repo.getWatchlist(uid);
@@ -109,7 +145,8 @@ app.post('/v1/alerts/run-batch', async (req) => {
   if (!w) return { userId: uid, results: [] };
 
   const settings = s?.macd ?? { fast: 12, slow: 26, signal: 9 };
-  const thresholds = s?.thresholds ?? { great: 3, rare: 6 };
+  // With 1D/1W/1M (3 timeframes), rare must be 3 to ever trigger.
+  const thresholds = s?.thresholds ?? { great: 2, rare: 3 };
   const lookbackCross = s?.lookbackCross ?? 3;
 
   const results = [] as any[];
