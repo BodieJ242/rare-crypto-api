@@ -1,15 +1,18 @@
 import type { Timeframe, Venue, CanonSymbol } from '../core/timeframes.js';
+import { tfWeight } from '../core/timeframes.js';
 import type { MacdSettings } from '../core/macd.js';
 import { computeMacd, crossesDown, crossesUp } from '../core/macd.js';
 import { getOhlcv } from './market.js';
 
-type PerTf = {
+export type PerTfState = {
   timeframe: Timeframe;
   macd: number;
   signal: number;
   hist: number;
   crossUp: boolean;
   crossDown: boolean;
+  aboveZero: boolean;
+  histIncreasing: boolean;
   histFlipUp: boolean;
   histFlipDown: boolean;
 };
@@ -27,57 +30,78 @@ export async function computeCmUltMacdMtf(args: {
   limit: number;
 }): Promise<{
   symbol: CanonSymbol;
+  venue: Venue;
   resolvedSymbol: string;
   usedQuote: string;
   fallbackUsed: boolean;
-  perTimeframe: Record<Timeframe, PerTf>;
+  perTimeframe: Record<Timeframe, PerTfState>;
   mtf: { bullScore: number; bearScore: number };
 }> {
-  const perTimeframe = {} as Record<Timeframe, PerTf>;
-  let resolvedSymbol = '';
-  let usedQuote = '';
+  const perTimeframe = {} as Record<Timeframe, PerTfState>;
+
+  let bullScore = 0;
+  let bearScore = 0;
+
+  let resolvedSymbol: string | null = null;
+  let usedQuote: string | null = null;
   let fallbackUsed = false;
 
   for (const tf of args.timeframes) {
     const o = await getOhlcv({ venue: args.venue, symbol: args.symbol, timeframe: tf, limit: args.limit });
-    resolvedSymbol = o.resolvedSymbol;
-    usedQuote = o.usedQuote;
-    fallbackUsed = o.fallbackUsed;
+    if (!resolvedSymbol) {
+      resolvedSymbol = o.resolvedSymbol;
+      usedQuote = o.usedQuote;
+      fallbackUsed = o.fallbackUsed;
+    }
 
     const close = o.candles.map(c => c.close);
+    if (close.length < args.settings.slow + args.settings.signal + 2) {
+      throw new Error(`Not enough candles for ${tf} (got ${close.length})`);
+    }
+
     const series = computeMacd(close, args.settings);
 
-    const macd = last(series.macd);
-    const signal = last(series.signal);
-    const hist = last(series.hist);
+    const i = close.length - 1;
+    const macdNow = series.macd[i];
+    const sigNow = series.signal[i];
+    const histNow = series.hist[i];
+    const macdPrev = series.macd[i - 1] ?? macdNow;
+    const sigPrev = series.signal[i - 1] ?? sigNow;
+    const histPrev = series.hist[i - 1] ?? histNow;
+    const histPrev2 = series.hist[i - 2] ?? histPrev;
 
-    const prevMacd = series.macd[series.macd.length - 2] ?? macd;
-    const prevSignal = series.signal[series.signal.length - 2] ?? signal;
-    const prevHist = series.hist[series.hist.length - 2] ?? hist;
+    const histIncreasing = histNow > histPrev;
+    const histIncreasingPrev = histPrev > histPrev2;
 
-    const crossUp = crossesUp(prevMacd, prevSignal, macd, signal);
-    const crossDown = crossesDown(prevMacd, prevSignal, macd, signal);
-    const histFlipUp = prevHist <= 0 && hist > 0;
-    const histFlipDown = prevHist >= 0 && hist < 0;
+    const state: PerTfState = {
+      timeframe: tf,
+      macd: macdNow,
+      signal: sigNow,
+      hist: histNow,
+      crossUp: crossesUp(macdPrev, sigPrev, macdNow, sigNow),
+      crossDown: crossesDown(macdPrev, sigPrev, macdNow, sigNow),
+      aboveZero: macdNow > 0,
+      histIncreasing,
+      // histFlip = momentum change (not zero-line cross)
+      histFlipUp: histIncreasing && !histIncreasingPrev,
+      histFlipDown: !histIncreasing && histIncreasingPrev,
+    };
 
-    perTimeframe[tf] = { timeframe: tf, macd, signal, hist, crossUp, crossDown, histFlipUp, histFlipDown };
-  }
+    perTimeframe[tf] = state;
 
-  // Score: bullish if macd>signal, bearish if macd<signal.
-  // (Matches the relaxed logic we decided on for the MCP server.)
-  let bullScore = 0;
-  let bearScore = 0;
-  for (const tf of args.timeframes) {
-    const p = perTimeframe[tf];
-    if (!p) continue;
-    if (p.macd > p.signal) bullScore++;
-    if (p.macd < p.signal) bearScore++;
+    // Weighted scoring: bull requires MACD above zero AND histogram increasing
+    const bullTF = state.aboveZero && state.histIncreasing;
+    const bearTF = !state.aboveZero && !state.histIncreasing;
+
+    if (bullTF) bullScore += tfWeight(tf);
+    if (bearTF) bearScore += tfWeight(tf);
   }
 
   return {
     symbol: args.symbol,
-    resolvedSymbol,
-    usedQuote,
+    venue: args.venue,
+    resolvedSymbol: resolvedSymbol ?? (args.symbol as string),
+    usedQuote: usedQuote ?? 'USDT',
     fallbackUsed,
     perTimeframe,
     mtf: { bullScore, bearScore },

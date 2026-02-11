@@ -7,6 +7,7 @@ import { migrate } from './db/migrate.js';
 import { Repo } from './db/repo.js';
 import { verifyAppleIdentityToken } from './auth/apple.js';
 import { evaluateAlerts as alertsEvaluate } from './services/alerts.js';
+import { listCoins } from './services/coinList.js';
 
 const env = {
   PORT: Number(process.env.PORT || 3000),
@@ -83,6 +84,15 @@ app.addHook('preHandler', async (req, reply) => {
   }
 });
 
+app.get('/v1/coins/list', async (req) => {
+  const venue = ((req as any).query?.venue ?? 'coinbase') as 'coinbase' | 'binanceus';
+  if (venue !== 'coinbase' && venue !== 'binanceus') {
+    return { error: 'venue must be coinbase or binanceus' };
+  }
+  const coins = await listCoins(venue);
+  return { venue, count: coins.length, coins };
+});
+
 app.get('/v1/watchlist/get', async (req) => {
   const uid = (req as any).user.uid;
   const w = await repo.getWatchlist(uid);
@@ -108,7 +118,7 @@ app.get('/v1/settings/get', async (req) => {
     s ?? {
       userId: uid,
       macd: { fast: 12, slow: 26, signal: 9 },
-      thresholds: { great: 2, rare: 3 },
+      thresholds: { great: 3, rare: 6 },
       lookbackCross: 3,
     }
   );
@@ -129,7 +139,7 @@ app.post('/v1/settings/set', async (req) => {
   const next = {
     userId: uid,
     macd: body.macd ?? prev?.macd ?? { fast: 12, slow: 26, signal: 9 },
-    thresholds: body.thresholds ?? prev?.thresholds ?? { great: 2, rare: 3 },
+    thresholds: body.thresholds ?? prev?.thresholds ?? { great: 3, rare: 6 },
     lookbackCross: body.lookbackCross ?? prev?.lookbackCross ?? 3,
   };
 
@@ -145,8 +155,8 @@ app.post('/v1/alerts/run-batch', async (req) => {
   if (!w) return { userId: uid, results: [] };
 
   const settings = s?.macd ?? { fast: 12, slow: 26, signal: 9 };
-  // With 1D/1W/1M (3 timeframes), rare must be 3 to ever trigger.
-  const thresholds = s?.thresholds ?? { great: 2, rare: 3 };
+  // Weighted scoring: 1D=1, 1W=2, 1M=3 → max=6. great=3 means weekly+daily aligned, rare=6 means all three.
+  const thresholds = s?.thresholds ?? { great: 3, rare: 6 };
   const lookbackCross = s?.lookbackCross ?? 3;
 
   const results = [] as any[];
