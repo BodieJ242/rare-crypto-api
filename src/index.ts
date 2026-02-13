@@ -154,6 +154,57 @@ app.post('/v1/alerts/run-batch', async (req) => {
 
   if (!w) return { userId: uid, results: [] };
 
+  // DEBUG: if ?test=true, return fake alerts to verify the UI
+  const useTestData = (req as any).query?.test === 'true';
+  if (useTestData) {
+    const now = new Date().toISOString();
+    return {
+      userId: uid,
+      results: [
+        {
+          symbol: w.symbols[0] ?? 'BTC-USD',
+          alerts: [{ label: 'Rare Buy', timeframe: 'MTF', at: now, confidence: 1.0, why: ['bullScore=6 (all timeframes bullish)', 'daily crossUp within last 3 candles'] }],
+          scores: { bullScore: 6, bearScore: 0 },
+          resolvedSymbol: w.symbols[0] ?? 'BTC-USD',
+          usedQuote: 'USD',
+          fallbackUsed: false,
+        },
+        {
+          symbol: w.symbols[1] ?? 'ETH-USD',
+          alerts: [{ label: 'Great Buy', timeframe: 'MTF', at: now, confidence: 0.83, why: ['bullScore=5 >= 3', 'daily event=crossUp'] }],
+          scores: { bullScore: 5, bearScore: 0 },
+          resolvedSymbol: w.symbols[1] ?? 'ETH-USD',
+          usedQuote: 'USD',
+          fallbackUsed: false,
+        },
+        {
+          symbol: w.symbols[2] ?? 'SOL-USD',
+          alerts: [{ label: 'Good Sell', timeframe: '1D', at: now, confidence: 0.5, why: ['daily event=crossDown'] }],
+          scores: { bullScore: 0, bearScore: 3 },
+          resolvedSymbol: w.symbols[2] ?? 'SOL-USD',
+          usedQuote: 'USD',
+          fallbackUsed: false,
+        },
+        {
+          symbol: w.symbols[3] ?? 'XRP-USD',
+          alerts: [{ label: 'Rare Sell', timeframe: 'MTF', at: now, confidence: 1.0, why: ['bearScore=6 (all timeframes bearish)', 'daily crossDown within last 3 candles'] }],
+          scores: { bullScore: 0, bearScore: 6 },
+          resolvedSymbol: w.symbols[3] ?? 'XRP-USD',
+          usedQuote: 'USD',
+          fallbackUsed: false,
+        },
+        {
+          symbol: w.symbols[4] ?? 'DOGE-USD',
+          alerts: [],
+          scores: { bullScore: 1, bearScore: 2 },
+          resolvedSymbol: w.symbols[4] ?? 'DOGE-USD',
+          usedQuote: 'USD',
+          fallbackUsed: false,
+        },
+      ],
+    };
+  }
+
   const settings = s?.macd ?? { fast: 12, slow: 26, signal: 9 };
   // Weighted scoring: 1D=1, 1W=2, 1M=3 → max=6. great=3 means weekly+daily aligned, rare=6 means all three.
   const thresholds = s?.thresholds ?? { great: 3, rare: 6 };
