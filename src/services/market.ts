@@ -27,7 +27,7 @@ export async function getOhlcv(params: {
     return { symbol, timeframe, candles, resolvedSymbol: product, fallbackUsed: resolved.fallbackUsed, usedQuote: resolved.usedQuote };
   }
 
-  const daily = await fetchCoinbaseDailyCandles(product, Math.max(limit * 7, 200));
+  const daily = await fetchCoinbaseDailyCandles(product, timeframe === '1M' ? Math.max(limit * 31, 1200) : Math.max(limit * 7, 200));
   const candles = timeframe === '1W' ? resampleDailyToWeekly(daily) : resampleDailyToMonthly(daily);
   return { symbol, timeframe, candles: candles.slice(-limit), resolvedSymbol: product, fallbackUsed: resolved.fallbackUsed, usedQuote: resolved.usedQuote };
 }

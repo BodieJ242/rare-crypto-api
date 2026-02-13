@@ -56,7 +56,9 @@ export async function computeCmUltMacdMtf(args: {
 
     const close = o.candles.map(c => c.close);
     if (close.length < args.settings.slow + args.settings.signal + 2) {
-      throw new Error(`Not enough candles for ${tf} (got ${close.length})`);
+      // Not enough data for this timeframe — skip it instead of crashing
+      console.warn(`Skipping ${tf}: only ${close.length} candles (need ${args.settings.slow + args.settings.signal + 2})`);
+      continue;
     }
 
     const series = computeMacd(close, args.settings);
