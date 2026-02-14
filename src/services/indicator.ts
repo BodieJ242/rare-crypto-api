@@ -2,6 +2,7 @@ import type { Timeframe, Venue, CanonSymbol } from '../core/timeframes.js';
 import { tfWeight } from '../core/timeframes.js';
 import type { MacdSettings } from '../core/macd.js';
 import { computeMacd, crossesDown, crossesUp } from '../core/macd.js';
+import { rsi, mfi, stochRsi, sma, type DailyIndicators } from '../core/indicators.js';
 import { getOhlcv } from './market.js';
 
 export type PerTfState = {
@@ -17,11 +18,6 @@ export type PerTfState = {
   histFlipDown: boolean;
 };
 
-function last<T>(a: T[]): T {
-  if (a.length === 0) throw new Error('empty series');
-  return a[a.length - 1];
-}
-
 export async function computeCmUltMacdMtf(args: {
   venue: Venue;
   symbol: CanonSymbol;
@@ -34,10 +30,11 @@ export async function computeCmUltMacdMtf(args: {
   resolvedSymbol: string;
   usedQuote: string;
   fallbackUsed: boolean;
-  perTimeframe: Record<Timeframe, PerTfState>;
+  perTimeframe: Record<string, PerTfState>;
   mtf: { bullScore: number; bearScore: number };
+  daily: DailyIndicators | null;
 }> {
-  const perTimeframe = {} as Record<Timeframe, PerTfState>;
+  const perTimeframe = {} as Record<string, PerTfState>;
 
   let bullScore = 0;
   let bearScore = 0;
@@ -45,6 +42,8 @@ export async function computeCmUltMacdMtf(args: {
   let resolvedSymbol: string | null = null;
   let usedQuote: string | null = null;
   let fallbackUsed = false;
+
+  let dailyIndicators: DailyIndicators | null = null;
 
   for (const tf of args.timeframes) {
     const o = await getOhlcv({ venue: args.venue, symbol: args.symbol, timeframe: tf, limit: args.limit });
@@ -54,16 +53,15 @@ export async function computeCmUltMacdMtf(args: {
       fallbackUsed = o.fallbackUsed;
     }
 
-    const close = o.candles.map(c => c.close);
-    if (close.length < args.settings.slow + args.settings.signal + 2) {
-      // Not enough data for this timeframe — skip it instead of crashing
-      console.warn(`Skipping ${tf}: only ${close.length} candles (need ${args.settings.slow + args.settings.signal + 2})`);
+    const closes = o.candles.map(c => c.close);
+    if (closes.length < args.settings.slow + args.settings.signal + 2) {
+      console.warn(`Skipping ${tf}: only ${closes.length} candles (need ${args.settings.slow + args.settings.signal + 2})`);
       continue;
     }
 
-    const series = computeMacd(close, args.settings);
+    const series = computeMacd(closes, args.settings);
 
-    const i = close.length - 1;
+    const i = closes.length - 1;
     const macdNow = series.macd[i];
     const sigNow = series.signal[i];
     const histNow = series.hist[i];
@@ -84,19 +82,46 @@ export async function computeCmUltMacdMtf(args: {
       crossDown: crossesDown(macdPrev, sigPrev, macdNow, sigNow),
       aboveZero: macdNow > 0,
       histIncreasing,
-      // histFlip = momentum change (not zero-line cross)
       histFlipUp: histIncreasing && !histIncreasingPrev,
       histFlipDown: !histIncreasing && histIncreasingPrev,
     };
 
     perTimeframe[tf] = state;
 
-    // Weighted scoring: bull requires MACD above zero AND histogram increasing
     const bullTF = state.aboveZero && state.histIncreasing;
     const bearTF = !state.aboveZero && !state.histIncreasing;
 
     if (bullTF) bullScore += tfWeight(tf);
     if (bearTF) bearScore += tfWeight(tf);
+
+    // Compute extra indicators on daily timeframe
+    if (tf === '1D') {
+      const highs = o.candles.map(c => c.high);
+      const lows = o.candles.map(c => c.low);
+      const vols = o.candles.map(c => c.volume);
+
+      const rsiArr = rsi(closes, 14);
+      const mfiArr = mfi(highs, lows, closes, vols, 14);
+      const stoch = stochRsi(closes, 14, 3, 3);
+      const sma200Arr = sma(closes, 200);
+
+      dailyIndicators = {
+        rsi: rsiArr[i] ?? NaN,
+        mfi: mfiArr[i] ?? NaN,
+        stochK: stoch.k[i] ?? NaN,
+        stochD: stoch.d[i] ?? NaN,
+        stochKPrev: stoch.k[i - 1] ?? NaN,
+        stochDPrev: stoch.d[i - 1] ?? NaN,
+        sma200: sma200Arr[i] ?? NaN,
+        close: closes[i],
+        macd: macdNow,
+        signal: sigNow,
+        hist: histNow,
+        histPrev,
+        macdLine: macdNow,
+        signalLine: sigNow,
+      };
+    }
   }
 
   return {
@@ -107,5 +132,6 @@ export async function computeCmUltMacdMtf(args: {
     fallbackUsed,
     perTimeframe,
     mtf: { bullScore, bearScore },
+    daily: dailyIndicators,
   };
 }
