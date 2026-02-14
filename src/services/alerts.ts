@@ -1,8 +1,6 @@
 import type { Timeframe, Venue, CanonSymbol } from '../core/timeframes.js';
 import type { MacdSettings } from '../core/macd.js';
-import { computeMacd, crossesDown, crossesUp } from '../core/macd.js';
 import { computeCmUltMacdMtf } from './indicator.js';
-import { getOhlcv } from './market.js';
 import type { DailyIndicators } from '../core/indicators.js';
 
 // ─── Alert Types ─────────────────────────────────────────────────

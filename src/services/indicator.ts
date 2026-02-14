@@ -4,6 +4,7 @@ import type { MacdSettings } from '../core/macd.js';
 import { computeMacd, crossesDown, crossesUp } from '../core/macd.js';
 import { rsi, mfi, stochRsi, sma, type DailyIndicators } from '../core/indicators.js';
 import { getOhlcv } from './market.js';
+import type { Candle } from '../venues/types.js';
 
 export type PerTfState = {
   timeframe: Timeframe;
@@ -53,7 +54,7 @@ export async function computeCmUltMacdMtf(args: {
       fallbackUsed = o.fallbackUsed;
     }
 
-    const closes = o.candles.map(c => c.close);
+    const closes = o.candles.map((c: Candle) => c.close);
     if (closes.length < args.settings.slow + args.settings.signal + 2) {
       console.warn(`Skipping ${tf}: only ${closes.length} candles (need ${args.settings.slow + args.settings.signal + 2})`);
       continue;
@@ -96,9 +97,9 @@ export async function computeCmUltMacdMtf(args: {
 
     // Compute extra indicators on daily timeframe
     if (tf === '1D') {
-      const highs = o.candles.map(c => c.high);
-      const lows = o.candles.map(c => c.low);
-      const vols = o.candles.map(c => c.volume);
+      const highs = o.candles.map((c: Candle) => c.high);
+      const lows = o.candles.map((c: Candle) => c.low);
+      const vols = o.candles.map((c: Candle) => c.volume);
 
       const rsiArr = rsi(closes, 14);
       const mfiArr = mfi(highs, lows, closes, vols, 14);
