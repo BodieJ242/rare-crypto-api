@@ -147,6 +147,13 @@ app.post('/v1/settings/set', async (req) => {
   return { ok: true, settings: next };
 });
 
+// ── Account Deletion ───────────────────────────────────────────────
+app.delete('/v1/account/delete', async (req) => {
+  const uid = (req as any).user.uid;
+  await repo.deleteUser(uid);
+  return { ok: true, message: 'Account and all associated data have been permanently deleted.' };
+});
+
 app.post('/v1/alerts/run-batch', async (req) => {
   const uid = (req as any).user.uid;
   const w = await repo.getWatchlist(uid);
@@ -158,48 +165,61 @@ app.post('/v1/alerts/run-batch', async (req) => {
   const useTestData = (req as any).query?.test === 'true';
   if (useTestData) {
     const now = new Date().toISOString();
+    const fakeIndicators = (rsi: number, mfi: number, k: number, d: number, sma: number, close: number) => ({
+      rsi, mfi, stochK: k, stochD: d, sma200: sma, close,
+    });
     return {
       userId: uid,
       results: [
         {
           symbol: w.symbols[0] ?? 'BTC-USD',
-          alerts: [{ label: 'Rare Buy', timeframe: 'MTF', at: now, confidence: 1.0, why: ['bullScore=6 (all timeframes bullish)', 'daily crossUp within last 3 candles'] }],
-          scores: { bullScore: 6, bearScore: 0 },
-          resolvedSymbol: w.symbols[0] ?? 'BTC-USD',
-          usedQuote: 'USD',
-          fallbackUsed: false,
+          alerts: [{
+            label: 'Momentum Buy', timeframe: 'MTF', at: now, confidence: 0.75,
+            why: ['Momentum expansion confirmed (scale-in zone)', 'MACD line > signal', 'Histogram > 0 and rising', 'RSI ≤ 58 (42.5)', 'MFI ≤ 60 (38.2)', 'Weekly MACD confirms', 'Score: 3.0/4.0'],
+            indicators: fakeIndicators(42.5, 38.2, 65.3, 58.1, 98500, 67200),
+          }],
+          scores: { bullScore: 4, bearScore: 0 },
+          indicators: fakeIndicators(42.5, 38.2, 65.3, 58.1, 98500, 67200),
+          resolvedSymbol: w.symbols[0] ?? 'BTC-USD', usedQuote: 'USD', fallbackUsed: false,
         },
         {
           symbol: w.symbols[1] ?? 'ETH-USD',
-          alerts: [{ label: 'Great Buy', timeframe: 'MTF', at: now, confidence: 0.83, why: ['bullScore=5 >= 3', 'daily event=crossUp'] }],
-          scores: { bullScore: 5, bearScore: 0 },
-          resolvedSymbol: w.symbols[1] ?? 'ETH-USD',
-          usedQuote: 'USD',
-          fallbackUsed: false,
+          alerts: [{
+            label: 'Early Buy Setup', timeframe: '1D', at: now, confidence: 0.5,
+            why: ['Daily MACD momentum bullish (+1): hist -9.45 → 5.00', 'Daily RSI < 55 (+0.5): 36.70', 'Daily MFI < 60 (+0.5): 28.89', 'RSI: 36.70 | MFI: 28.89 | StochRSI K/D: 89.11/71.66', 'Score: 2.0/4.0', '⚠ Timing risk: StochRSI overheated/rolling over'],
+            indicators: fakeIndicators(36.7, 28.9, 89.1, 71.7, 3554, 1955),
+          }],
+          scores: { bullScore: 0, bearScore: 2 },
+          indicators: fakeIndicators(36.7, 28.9, 89.1, 71.7, 3554, 1955),
+          resolvedSymbol: w.symbols[1] ?? 'ETH-USD', usedQuote: 'USD', fallbackUsed: false,
         },
         {
           symbol: w.symbols[2] ?? 'SOL-USD',
-          alerts: [{ label: 'Good Sell', timeframe: '1D', at: now, confidence: 0.5, why: ['daily event=crossDown'] }],
-          scores: { bullScore: 0, bearScore: 3 },
-          resolvedSymbol: w.symbols[2] ?? 'SOL-USD',
-          usedQuote: 'USD',
-          fallbackUsed: false,
+          alerts: [{
+            label: 'Great Sell', timeframe: '1D', at: now, confidence: 0.86,
+            why: ['High-probability profit-taking zone', 'Daily MFI ≥ 80 (+1): 85.20', 'Daily StochRSI bearish cross (+1): K/D 92.1/88.3 → 87.5/89.1', 'Daily MACD weakening (+1): hist 2.45 → 1.98', 'RSI: 72.30 | MFI: 85.20 | StochRSI K/D: 87.50/89.10', 'Score: 3.0/3.5'],
+            indicators: fakeIndicators(72.3, 85.2, 87.5, 89.1, 163.7, 128.5),
+          }],
+          scores: { bullScore: 3, bearScore: 0 },
+          indicators: fakeIndicators(72.3, 85.2, 87.5, 89.1, 163.7, 128.5),
+          resolvedSymbol: w.symbols[2] ?? 'SOL-USD', usedQuote: 'USD', fallbackUsed: false,
         },
         {
           symbol: w.symbols[3] ?? 'XRP-USD',
-          alerts: [{ label: 'Rare Sell', timeframe: 'MTF', at: now, confidence: 1.0, why: ['bearScore=6 (all timeframes bearish)', 'daily crossDown within last 3 candles'] }],
-          scores: { bullScore: 0, bearScore: 6 },
-          resolvedSymbol: w.symbols[3] ?? 'XRP-USD',
-          usedQuote: 'USD',
-          fallbackUsed: false,
+          alerts: [{
+            label: 'Rare Accumulation', timeframe: '1D', at: now, confidence: 0.9,
+            why: ['Close < SMA200 (0.42 < 1.85, -77.3%)', 'RSI < 35 (22.10)', 'StochRSI K/D: 15.30/18.40'],
+            indicators: fakeIndicators(22.1, 18.5, 15.3, 18.4, 1.85, 0.42),
+          }],
+          scores: { bullScore: 0, bearScore: 5 },
+          indicators: fakeIndicators(22.1, 18.5, 15.3, 18.4, 1.85, 0.42),
+          resolvedSymbol: w.symbols[3] ?? 'XRP-USD', usedQuote: 'USD', fallbackUsed: false,
         },
         {
           symbol: w.symbols[4] ?? 'DOGE-USD',
           alerts: [],
           scores: { bullScore: 1, bearScore: 2 },
-          resolvedSymbol: w.symbols[4] ?? 'DOGE-USD',
-          usedQuote: 'USD',
-          fallbackUsed: false,
+          resolvedSymbol: w.symbols[4] ?? 'DOGE-USD', usedQuote: 'USD', fallbackUsed: false,
         },
       ],
     };
