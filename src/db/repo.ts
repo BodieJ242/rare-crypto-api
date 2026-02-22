@@ -89,4 +89,10 @@ export class Repo {
       lookbackCross: row.lookback_cross,
     };
   }
+
+  async deleteUser(userId: string) {
+    await this.pool.query('DELETE FROM settings WHERE user_id=$1', [userId]);
+    await this.pool.query('DELETE FROM watchlists WHERE user_id=$1', [userId]);
+    await this.pool.query('DELETE FROM users WHERE id=$1', [userId]);
+  }
 }

@@ -147,6 +147,13 @@ app.post('/v1/settings/set', async (req) => {
   return { ok: true, settings: next };
 });
 
+// ── Account Deletion ───────────────────────────────────────────────
+app.delete('/v1/account/delete', async (req) => {
+  const uid = (req as any).user.uid;
+  await repo.deleteUser(uid);
+  return { ok: true, message: 'Account and all associated data have been permanently deleted.' };
+});
+
 app.post('/v1/alerts/run-batch', async (req) => {
   const uid = (req as any).user.uid;
   const w = await repo.getWatchlist(uid);
