@@ -16,7 +16,7 @@ const env = {
   JWT_SECRET: process.env.JWT_SECRET || '',
   JWT_ISSUER: process.env.JWT_ISSUER || 'rare-crypto-api',
   JWT_AUDIENCE: process.env.JWT_AUDIENCE || 'co.rarecrypto.rarecrypto',
-  JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '1h',
+  JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '90d',
   ENABLE_AUTH_DEV: String(process.env.ENABLE_AUTH_DEV || 'true').toLowerCase() === 'true',
   APPLE_AUDIENCE_IOS: process.env.APPLE_AUDIENCE_IOS || 'co.rarecrypto.rarecrypto',
   APPLE_ISSUER: process.env.APPLE_ISSUER || 'https://appleid.apple.com',
@@ -37,6 +37,7 @@ await app.register(jwt, { secret: env.JWT_SECRET });
 const repo = new Repo(env.DATABASE_URL);
 
 app.get('/healthz', async () => ({ ok: true }));
+app.get('/health', async () => ({ ok: true }));
 
 // Temporary dev auth (useful until Apple Developer is ready)
 app.post('/v1/auth/dev', async (req, reply) => {
@@ -82,6 +83,16 @@ app.addHook('preHandler', async (req, reply) => {
       return reply.code(401).send({ error: 'unauthorized' });
     }
   }
+});
+
+// Token refresh: issue a new JWT if the current one is still valid (requires auth)
+app.post('/v1/token/refresh', async (req) => {
+  const uid = (req as any).user.uid;
+  const token = (app as any).jwt.sign(
+    { uid },
+    { issuer: env.JWT_ISSUER, audience: env.JWT_AUDIENCE, expiresIn: env.JWT_EXPIRES_IN }
+  );
+  return { token, userId: uid };
 });
 
 app.get('/v1/coins/list', async (req) => {
