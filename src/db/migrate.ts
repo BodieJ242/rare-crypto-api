@@ -32,6 +32,25 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 `,
   },
+  {
+    id: '002_device_tokens_and_scan_cache',
+    sql: `
+CREATE TABLE IF NOT EXISTS device_tokens (
+  id SERIAL PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token TEXT NOT NULL,
+  platform TEXT NOT NULL DEFAULT 'ios',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(user_id, token)
+);
+
+CREATE TABLE IF NOT EXISTS last_scan_results (
+  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  results JSONB NOT NULL,
+  scanned_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+`,
+  },
 ];
 
 export async function migrate(databaseUrl: string) {

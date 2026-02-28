@@ -8,6 +8,7 @@ import { Repo } from './db/repo.js';
 import { verifyAppleIdentityToken } from './auth/apple.js';
 import { evaluateAlerts as alertsEvaluate } from './services/alerts.js';
 import { listCoins } from './services/coinList.js';
+import { startCronScanner } from './services/cron.js';
 
 const env = {
   PORT: Number(process.env.PORT || 3000),
@@ -158,6 +159,33 @@ app.post('/v1/settings/set', async (req) => {
   return { ok: true, settings: next };
 });
 
+// ── Push Notification Device Tokens ──────────────────────────────────
+app.post('/v1/device/register', async (req) => {
+  const uid = (req as any).user.uid;
+  const body = z.object({
+    token: z.string().min(10),
+    platform: z.enum(['ios', 'android']).default('ios'),
+  }).parse((req as any).body ?? {});
+
+  await repo.upsertDeviceToken(uid, body.token, body.platform);
+  return { ok: true };
+});
+
+app.post('/v1/device/unregister', async (req) => {
+  const uid = (req as any).user.uid;
+  const body = z.object({ token: z.string().min(10) }).parse((req as any).body ?? {});
+  await repo.removeDeviceToken(uid, body.token);
+  return { ok: true };
+});
+
+// ── Cached Scan Results (for widget / quick load) ───────────────────
+app.get('/v1/alerts/latest', async (req) => {
+  const uid = (req as any).user.uid;
+  const cached = await repo.getScanResults(uid);
+  if (!cached) return { userId: uid, results: [], scannedAt: null };
+  return { userId: uid, results: cached.results, scannedAt: cached.scannedAt };
+});
+
 // ── Account Deletion ───────────────────────────────────────────────
 app.delete('/v1/account/delete', async (req) => {
   const uid = (req as any).user.uid;
@@ -263,6 +291,9 @@ async function start() {
     await migrate(env.DATABASE_URL);
   }
   await app.listen({ port: env.PORT, host: '0.0.0.0' });
+
+  // Start background scanner (scans all users every 4 hours)
+  startCronScanner(repo);
 }
 
 start().catch((e) => {

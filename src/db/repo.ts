@@ -91,8 +91,65 @@ export class Repo {
   }
 
   async deleteUser(userId: string) {
+    await this.pool.query('DELETE FROM device_tokens WHERE user_id=$1', [userId]);
+    await this.pool.query('DELETE FROM last_scan_results WHERE user_id=$1', [userId]);
     await this.pool.query('DELETE FROM settings WHERE user_id=$1', [userId]);
     await this.pool.query('DELETE FROM watchlists WHERE user_id=$1', [userId]);
     await this.pool.query('DELETE FROM users WHERE id=$1', [userId]);
+  }
+
+  // ── Device Tokens ──────────────────────────────────────────────────
+
+  async upsertDeviceToken(userId: string, token: string, platform = 'ios') {
+    await this.pool.query(
+      `INSERT INTO device_tokens(user_id, token, platform)
+       VALUES($1, $2, $3)
+       ON CONFLICT (user_id, token) DO NOTHING`,
+      [userId, token, platform]
+    );
+  }
+
+  async removeDeviceToken(userId: string, token: string) {
+    await this.pool.query('DELETE FROM device_tokens WHERE user_id=$1 AND token=$2', [userId, token]);
+  }
+
+  async getDeviceTokens(userId: string): Promise<string[]> {
+    const r = await this.pool.query('SELECT token FROM device_tokens WHERE user_id=$1', [userId]);
+    return r.rows.map((row: any) => row.token);
+  }
+
+  // ── Scan Cache ─────────────────────────────────────────────────────
+
+  async upsertScanResults(userId: string, results: any) {
+    await this.pool.query(
+      `INSERT INTO last_scan_results(user_id, results, scanned_at)
+       VALUES($1, $2, now())
+       ON CONFLICT (user_id) DO UPDATE SET results=EXCLUDED.results, scanned_at=now()`,
+      [userId, JSON.stringify(results)]
+    );
+  }
+
+  async getScanResults(userId: string): Promise<{ results: any; scannedAt: string } | null> {
+    const r = await this.pool.query('SELECT results, scanned_at FROM last_scan_results WHERE user_id=$1', [userId]);
+    if (r.rowCount === 0) return null;
+    const row = r.rows[0];
+    return { results: typeof row.results === 'string' ? JSON.parse(row.results) : row.results, scannedAt: row.scanned_at };
+  }
+
+  // ── All Users with Watchlists (for cron) ──────────────────────────
+
+  async getAllUsersWithWatchlists(): Promise<Array<{ userId: string; venue: string; symbols: string[]; timeframes: string[] }>> {
+    const r = await this.pool.query(`
+      SELECT w.user_id, w.venue, w.symbols, w.timeframes
+      FROM watchlists w
+      JOIN users u ON u.id = w.user_id
+      WHERE jsonb_array_length(w.symbols) > 0
+    `);
+    return r.rows.map((row: any) => ({
+      userId: row.user_id,
+      venue: row.venue,
+      symbols: typeof row.symbols === 'string' ? JSON.parse(row.symbols) : row.symbols,
+      timeframes: typeof row.timeframes === 'string' ? JSON.parse(row.timeframes) : row.timeframes,
+    }));
   }
 }
