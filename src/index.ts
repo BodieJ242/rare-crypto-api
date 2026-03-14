@@ -295,6 +295,30 @@ async function start() {
   // Start background scanner (scans all users every 4 hours)
   startCronScanner(repo);
 }
+// ── Debug / Test ───────────────────────────────────────────────
+app.post('/v1/debug/test-push', async (req) => {
+  const uid = (req as any).user.uid;
+  const deviceTokens = await repo.getDeviceTokens(uid);
+  
+  if (deviceTokens.length === 0) {
+    return { ok: false, message: 'No device tokens found for your account' };
+  }
+
+  const { sendPushToMultiple } = await import('./services/push.js');
+  const failed = await sendPushToMultiple(deviceTokens, {
+    title: '💎 Test Notification',
+    body: 'RareCrypto push notifications are working!',
+    badge: 1,
+    data: { type: 'test' },
+  });
+
+  return {
+    ok: true,
+    tokenCount: deviceTokens.length,
+    failedCount: failed.length,
+    message: failed.length === 0 ? 'Push sent successfully!' : 'Some tokens failed',
+  };
+});
 
 start().catch((e) => {
   app.log.error(e);
