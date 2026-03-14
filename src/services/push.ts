@@ -1,10 +1,9 @@
 import { SignJWT, importPKCS8 } from 'jose';
-import * as fs from 'fs';
 
 const APNS_KEY_ID = process.env.APNS_KEY_ID || '';
 const APNS_TEAM_ID = process.env.APNS_TEAM_ID || '';
-const APNS_KEY_PATH = process.env.APNS_KEY_PATH || './apns-key.p8';
-const APNS_TOPIC = process.env.APNS_TOPIC || 'co.rarecrypto.rarecrypto'; // bundle ID
+const APNS_PRIVATE_KEY = process.env.APNS_PRIVATE_KEY || '';
+const APNS_TOPIC = process.env.APNS_TOPIC || 'co.rarecrypto.rarecrypto';
 const APNS_HOST = (process.env.NODE_ENV === 'production')
   ? 'https://api.push.apple.com'
   : 'https://api.sandbox.push.apple.com';
@@ -14,14 +13,13 @@ let privateKey: any = null;
 
 async function getPrivateKey() {
   if (privateKey) return privateKey;
-  const keyData = fs.readFileSync(APNS_KEY_PATH, 'utf8');
-  privateKey = await importPKCS8(keyData, 'ES256');
+  if (!APNS_PRIVATE_KEY) throw new Error('APNS_PRIVATE_KEY env var is not set');
+  privateKey = await importPKCS8(APNS_PRIVATE_KEY, 'ES256');
   return privateKey;
 }
 
 async function getApnsToken(): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
-  // Reuse token if valid (APNs tokens last up to 60 min, we refresh at 50)
   if (cachedToken && cachedToken.expiresAt > now) {
     return cachedToken.jwt;
   }
@@ -46,7 +44,7 @@ export type PushPayload = {
 };
 
 export async function sendPush(deviceToken: string, payload: PushPayload): Promise<boolean> {
-  if (!APNS_KEY_ID || !APNS_TEAM_ID) {
+  if (!APNS_KEY_ID || !APNS_TEAM_ID || !APNS_PRIVATE_KEY) {
     console.warn('APNs not configured — skipping push');
     return false;
   }
@@ -78,20 +76,20 @@ export async function sendPush(deviceToken: string, payload: PushPayload): Promi
     });
 
     if (response.ok) {
+      console.log(`[push] Sent successfully to ${deviceToken.slice(0, 10)}...`);
       return true;
     }
 
     const err = await response.json().catch(() => ({}));
-    console.error(`APNs error (${response.status}):`, err);
+    console.error(`[push] APNs error (${response.status}):`, err);
 
-    // If token is invalid, caller should remove it
     if (response.status === 410 || (err as any)?.reason === 'BadDeviceToken') {
       return false;
     }
 
     return false;
   } catch (e) {
-    console.error('Push send failed:', e);
+    console.error('[push] Send failed:', e);
     return false;
   }
 }
