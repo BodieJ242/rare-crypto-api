@@ -7,6 +7,15 @@ import type { Candle } from './types.js';
 const MAX_CANDLES_PER_REQUEST = 300;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+// Rate-limit handling
+const PAGE_DELAY_MS = 300;   // Pause between pagination requests for the same symbol
+const MAX_RETRIES = 4;       // Max attempts on 429 / transient errors
+const RETRY_BASE_MS = 1000;  // Base back-off: 1 s, 2 s, 4 s, 8 s
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 async function fetchCoinbaseDailyCandlesPage(params: {
   product: string;
   start: Date;
@@ -17,30 +26,55 @@ async function fetchCoinbaseDailyCandlesPage(params: {
   url.searchParams.set('start', params.start.toISOString());
   url.searchParams.set('end', params.end.toISOString());
 
-  const r = await fetch(url.toString(), {
-    headers: {
-      'User-Agent': 'rare-crypto-api/1.0',
-      'Accept': 'application/json',
-    },
-  });
-  if (!r.ok) {
-    const t = await r.text().catch(() => '');
-    throw new Error(`coinbase candles failed: ${r.status} ${t}`);
-  }
-  const data = (await r.json()) as any[];
-  if (!Array.isArray(data)) throw new Error('coinbase candles: bad response');
+  let lastError: Error | undefined;
 
-  return data
-    .map(row => ({
-      time: new Date(row[0] * 1000).toISOString(),
-      low: Number(row[1]),
-      high: Number(row[2]),
-      open: Number(row[3]),
-      close: Number(row[4]),
-      volume: Number(row[5]),
-    }))
-    // Coinbase returns newest-first
-    .reverse();
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      // Exponential back-off between retries: 1 s, 2 s, 4 s …
+      await sleep(RETRY_BASE_MS * Math.pow(2, attempt - 1));
+    }
+
+    const r = await fetch(url.toString(), {
+      headers: {
+        'User-Agent': 'rare-crypto-api/1.0',
+        'Accept': 'application/json',
+      },
+    });
+
+    if (r.status === 429) {
+      // Respect Retry-After if provided, otherwise back off exponentially
+      const retryAfter = r.headers.get('Retry-After');
+      const waitMs = retryAfter
+        ? parseInt(retryAfter, 10) * 1000
+        : RETRY_BASE_MS * Math.pow(2, attempt);
+      console.warn(`[coinbase] Rate limited (429) for ${params.product}, waiting ${waitMs}ms (attempt ${attempt + 1}/${MAX_RETRIES})`);
+      await sleep(waitMs);
+      lastError = new Error(`coinbase candles rate limited: 429`);
+      continue;
+    }
+
+    if (!r.ok) {
+      const t = await r.text().catch(() => '');
+      throw new Error(`coinbase candles failed: ${r.status} ${t}`);
+    }
+
+    const data = (await r.json()) as any[];
+    if (!Array.isArray(data)) throw new Error('coinbase candles: bad response');
+
+    return data
+      .map(row => ({
+        time: new Date(row[0] * 1000).toISOString(),
+        low: Number(row[1]),
+        high: Number(row[2]),
+        open: Number(row[3]),
+        close: Number(row[4]),
+        volume: Number(row[5]),
+      }))
+      // Coinbase returns newest-first
+      .reverse();
+  }
+
+  throw lastError ?? new Error('coinbase candles: max retries exceeded');
 }
 
 export async function fetchCoinbaseDailyCandles(product: string, limit: number): Promise<Candle[]> {
@@ -50,8 +84,15 @@ export async function fetchCoinbaseDailyCandles(product: string, limit: number):
   let end = new Date();
   const out: Candle[] = [];
   const seen = new Set<string>();
+  let firstPage = true;
 
   while (out.length < need) {
+    // Throttle between pagination requests to stay within Coinbase rate limits
+    if (!firstPage) {
+      await sleep(PAGE_DELAY_MS);
+    }
+    firstPage = false;
+
     const remaining = need - out.length;
     // Request at most 300 candles; add a small buffer.
     const pageSize = Math.min(MAX_CANDLES_PER_REQUEST, Math.max(50, remaining + 5));

@@ -4,6 +4,14 @@ import { sendPushToMultiple, type PushPayload } from './push.js';
 
 const SCAN_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
 
+// Delay between symbol evaluations within a single user's scan.
+// Coinbase's public API rate-limits aggressively; each symbol evaluation
+// can fire multiple paginated requests, so we space them out.
+const SYMBOL_DELAY_MS = 400;
+
+// Delay between users during a full scan.
+const USER_DELAY_MS = 1_000;
+
 export function startCronScanner(repo: Repo) {
   console.log(`[cron] Starting auto-scanner (every ${SCAN_INTERVAL_MS / 1000 / 60 / 60}h)`);
 
@@ -33,8 +41,8 @@ async function runScanAll(repo: Repo) {
         console.error(`[cron] Error scanning user ${user.userId}:`, e);
       }
 
-      // Small delay between users to avoid rate limits
-      await sleep(500);
+      // Delay between users to avoid hammering the exchange API
+      await sleep(USER_DELAY_MS);
     }
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
@@ -66,7 +74,9 @@ async function scanUser(
 
   // Run the scan
   const results: any[] = [];
-  for (const symbol of user.symbols) {
+  for (let i = 0; i < user.symbols.length; i++) {
+    const symbol = user.symbols[i];
+
     try {
       const out = await evaluateAlerts({
         venue: user.venue as any,
@@ -88,6 +98,13 @@ async function scanUser(
     } catch (e) {
       console.error(`[cron] Error evaluating ${symbol} for ${user.userId}:`, e);
       results.push({ symbol, alerts: [], scores: { bullScore: 0, bearScore: 0 } });
+    }
+
+    // Throttle between symbols to respect Coinbase (and other venue) rate limits.
+    // Each evaluateAlerts call can fire multiple paginated requests, so even a
+    // short pause prevents 429s during large watchlist scans.
+    if (i < user.symbols.length - 1) {
+      await sleep(SYMBOL_DELAY_MS);
     }
   }
 
