@@ -1,12 +1,17 @@
+import * as http2 from 'node:http2';
 import { SignJWT, importPKCS8 } from 'jose';
 
 const APNS_KEY_ID = process.env.APNS_KEY_ID || '';
 const APNS_TEAM_ID = process.env.APNS_TEAM_ID || '';
 const APNS_PRIVATE_KEY = process.env.APNS_PRIVATE_KEY || '';
 const APNS_TOPIC = process.env.APNS_TOPIC || 'co.rarecrypto.rarecrypto';
+
+// APNs requires HTTP/2. The host is determined by environment.
 const APNS_HOST = (process.env.NODE_ENV === 'production')
   ? 'https://api.push.apple.com'
   : 'https://api.sandbox.push.apple.com';
+
+// ── JWT token cache ────────────────────────────────────────────────
 
 let cachedToken: { jwt: string; expiresAt: number } | null = null;
 let privateKey: any = null;
@@ -34,6 +39,61 @@ async function getApnsToken(): Promise<string> {
   cachedToken = { jwt, expiresAt: now + 50 * 60 };
   return jwt;
 }
+
+// ── HTTP/2 session management ──────────────────────────────────────
+// APNs mandates HTTP/2. Node's built-in fetch (undici) speaks HTTP/1.1
+// for outgoing TLS connections, so we use node:http2 directly.
+
+let apnsSession: http2.ClientHttp2Session | null = null;
+
+function getApnsSession(): http2.ClientHttp2Session {
+  if (apnsSession && !apnsSession.destroyed && !apnsSession.closed) {
+    return apnsSession;
+  }
+  apnsSession = http2.connect(APNS_HOST);
+  apnsSession.on('error', (err) => {
+    console.error('[push] APNs HTTP/2 session error:', err);
+    apnsSession = null;
+  });
+  apnsSession.on('close', () => {
+    apnsSession = null;
+  });
+  return apnsSession;
+}
+
+function apnsRequest(
+  deviceToken: string,
+  headers: Record<string, string>,
+  body: string,
+): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const session = getApnsSession();
+    const req = session.request({
+      ':method': 'POST',
+      ':path': `/3/device/${deviceToken}`,
+      ...headers,
+      'content-type': 'application/json',
+      'content-length': String(Buffer.byteLength(body)),
+    });
+
+    let status = 0;
+    let responseBody = '';
+
+    req.on('response', (h) => {
+      status = h[':status'] as number;
+    });
+    req.on('data', (chunk) => {
+      responseBody += chunk;
+    });
+    req.on('end', () => resolve({ status, body: responseBody }));
+    req.on('error', reject);
+
+    req.write(body);
+    req.end();
+  });
+}
+
+// ── Public API ─────────────────────────────────────────────────────
 
 export type PushPayload = {
   title: string;
@@ -73,26 +133,26 @@ export async function sendPush(deviceToken: string, payload: PushPayload): Promi
     // if the device is temporarily offline. Without this it defaults to 0 (discard immediately).
     const expirationEpoch = Math.floor(Date.now() / 1000) + 60 * 60;
 
-    const response = await fetch(`${APNS_HOST}/3/device/${deviceToken}`, {
-      method: 'POST',
-      headers: {
+    const response = await apnsRequest(
+      deviceToken,
+      {
         'authorization': `bearer ${token}`,
         'apns-topic': APNS_TOPIC,
         'apns-push-type': 'alert',
         'apns-priority': '10',
         'apns-expiration': String(expirationEpoch),
-        'content-type': 'application/json',
       },
-      body: JSON.stringify(apnsPayload),
-    });
+      JSON.stringify(apnsPayload),
+    );
 
-    if (response.ok) {
+    if (response.status === 200) {
       console.log(`[push] Sent successfully to ${deviceToken.slice(0, 10)}...`);
       return 'sent';
     }
 
-    const err = await response.json().catch(() => ({}));
-    const reason = (err as any)?.reason ?? '';
+    let err: any = {};
+    try { err = JSON.parse(response.body); } catch {}
+    const reason = err?.reason ?? '';
     console.error(`[push] APNs error (${response.status}) reason=${reason}:`, err);
 
     // 410 = device unregistered; specific reasons = token permanently invalid.
@@ -102,7 +162,7 @@ export async function sendPush(deviceToken: string, payload: PushPayload): Promi
       return 'invalid-token';
     }
 
-    // Anything else (500, 429, network error, etc.) is transient — keep the token.
+    // Anything else is transient — keep the token.
     return 'error';
   } catch (e) {
     console.error('[push] Send failed:', e);
