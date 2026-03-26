@@ -43,10 +43,16 @@ export type PushPayload = {
   data?: Record<string, any>;
 };
 
-export async function sendPush(deviceToken: string, payload: PushPayload): Promise<boolean> {
+// APNs error reasons that mean the token is permanently dead and should be removed.
+// All other errors (500s, network failures, etc.) are transient — don't remove the token.
+const INVALID_TOKEN_REASONS = new Set(['BadDeviceToken', 'Unregistered', 'MissingDeviceToken']);
+
+type PushResult = 'sent' | 'invalid-token' | 'error';
+
+export async function sendPush(deviceToken: string, payload: PushPayload): Promise<PushResult> {
   if (!APNS_KEY_ID || !APNS_TEAM_ID || !APNS_PRIVATE_KEY) {
     console.warn('APNs not configured — skipping push');
-    return false;
+    return 'error';
   }
 
   try {
@@ -63,6 +69,10 @@ export async function sendPush(deviceToken: string, payload: PushPayload): Promi
       ...payload.data,
     };
 
+    // apns-expiration: allow APNs to store & retry delivery for up to 1 hour
+    // if the device is temporarily offline. Without this it defaults to 0 (discard immediately).
+    const expirationEpoch = Math.floor(Date.now() / 1000) + 60 * 60;
+
     const response = await fetch(`${APNS_HOST}/3/device/${deviceToken}`, {
       method: 'POST',
       headers: {
@@ -70,6 +80,7 @@ export async function sendPush(deviceToken: string, payload: PushPayload): Promi
         'apns-topic': APNS_TOPIC,
         'apns-push-type': 'alert',
         'apns-priority': '10',
+        'apns-expiration': String(expirationEpoch),
         'content-type': 'application/json',
       },
       body: JSON.stringify(apnsPayload),
@@ -77,31 +88,38 @@ export async function sendPush(deviceToken: string, payload: PushPayload): Promi
 
     if (response.ok) {
       console.log(`[push] Sent successfully to ${deviceToken.slice(0, 10)}...`);
-      return true;
+      return 'sent';
     }
 
     const err = await response.json().catch(() => ({}));
-    console.error(`[push] APNs error (${response.status}):`, err);
+    const reason = (err as any)?.reason ?? '';
+    console.error(`[push] APNs error (${response.status}) reason=${reason}:`, err);
 
-    if (response.status === 410 || (err as any)?.reason === 'BadDeviceToken') {
-      return false;
+    // 410 = device unregistered; specific reasons = token permanently invalid.
+    // Only in these cases should the token be removed from the DB.
+    if (response.status === 410 || INVALID_TOKEN_REASONS.has(reason)) {
+      console.log(`[push] Marking token for removal: ${deviceToken.slice(0, 10)}... (${reason || 410})`);
+      return 'invalid-token';
     }
 
-    return false;
+    // Anything else (500, 429, network error, etc.) is transient — keep the token.
+    return 'error';
   } catch (e) {
     console.error('[push] Send failed:', e);
-    return false;
+    return 'error';
   }
 }
 
+// Returns only the tokens that are permanently invalid and should be removed.
+// Transient send failures are logged but the token is kept.
 export async function sendPushToMultiple(
   deviceTokens: string[],
   payload: PushPayload
 ): Promise<string[]> {
-  const failedTokens: string[] = [];
+  const invalidTokens: string[] = [];
   for (const token of deviceTokens) {
-    const ok = await sendPush(token, payload);
-    if (!ok) failedTokens.push(token);
+    const result = await sendPush(token, payload);
+    if (result === 'invalid-token') invalidTokens.push(token);
   }
-  return failedTokens;
+  return invalidTokens;
 }
