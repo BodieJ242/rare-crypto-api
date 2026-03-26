@@ -19,7 +19,10 @@ let privateKey: any = null;
 async function getPrivateKey() {
   if (privateKey) return privateKey;
   if (!APNS_PRIVATE_KEY) throw new Error('APNS_PRIVATE_KEY env var is not set');
-  privateKey = await importPKCS8(APNS_PRIVATE_KEY, 'ES256');
+  // Render and other platforms sometimes store multiline env vars with literal \n
+  // instead of real newlines. Normalize either way so PEM parsing works correctly.
+  const keyData = APNS_PRIVATE_KEY.replace(/\\n/g, '\n');
+  privateKey = await importPKCS8(keyData, 'ES256');
   return privateKey;
 }
 
@@ -61,7 +64,7 @@ function getApnsSession(): http2.ClientHttp2Session {
   return apnsSession;
 }
 
-function apnsRequest(
+function apnsRequestOnce(
   deviceToken: string,
   headers: Record<string, string>,
   body: string,
@@ -91,6 +94,25 @@ function apnsRequest(
     req.write(body);
     req.end();
   });
+}
+
+// Wraps apnsRequestOnce with one retry on ECONNRESET, since APNs
+// sometimes resets the HTTP/2 session after an auth error or idle timeout.
+async function apnsRequest(
+  deviceToken: string,
+  headers: Record<string, string>,
+  body: string,
+): Promise<{ status: number; body: string }> {
+  try {
+    return await apnsRequestOnce(deviceToken, headers, body);
+  } catch (err: any) {
+    if (err?.code === 'ECONNRESET' || err?.code === 'ERR_HTTP2_STREAM_ERROR') {
+      console.warn('[push] APNs connection reset, retrying with fresh session...');
+      apnsSession = null; // force new session
+      return await apnsRequestOnce(deviceToken, headers, body);
+    }
+    throw err;
+  }
 }
 
 // ── Public API ─────────────────────────────────────────────────────
