@@ -119,4 +119,12 @@ export type DailyIndicators = {
   histPrev: number;
   macdLine: number;
   signalLine: number;
+  // Volume confirmation
+  volume: number;          // current bar volume
+  volumeAvg: number;       // 20-period volume SMA
+  volumeRatio: number;     // volume / volumeAvg (NaN if unavailable)
+  highVolume: boolean;     // volumeRatio >= VOLUME_THRESHOLD (1.5)
 };
+
+export const VOLUME_SMA_LEN = 20;
+export const VOLUME_THRESHOLD = 1.5;

@@ -20,6 +20,9 @@ export type Alert = {
   at: string;
   confidence: number;
   why: string[];
+  highVolume?: boolean;
+  volumeRatio?: number;
+  volumeAvg?: number;
   indicators?: {
     rsi?: number;
     mfi?: number;
@@ -155,6 +158,30 @@ function checkRareAccumulation(d: DailyIndicators): { pass: boolean; reasons: st
   return { pass: belowSma200 && rsiOversold, reasons };
 }
 
+// ─── Volume confirmation helper ──────────────────────────────────
+
+const VOLUME_THRESHOLD = 1.5;
+
+function volumeWhyLine(d: DailyIndicators): string | null {
+  if (!isFinite(d.volumeRatio)) return null;
+  const ratioStr = d.volumeRatio.toFixed(2);
+  if (d.highVolume) {
+    return `⚡ Volume: ${ratioStr}x avg (high volume confirms signal)`;
+  }
+  return `Volume: ${ratioStr}x avg (below ${VOLUME_THRESHOLD}x threshold)`;
+}
+
+function withVolume(alert: Alert, d: DailyIndicators): Alert {
+  const line = volumeWhyLine(d);
+  return {
+    ...alert,
+    highVolume: d.highVolume,
+    volumeRatio: isFinite(d.volumeRatio) ? Number(d.volumeRatio.toFixed(3)) : undefined,
+    volumeAvg: isFinite(d.volumeAvg) ? d.volumeAvg : undefined,
+    why: line ? [...alert.why, line] : alert.why,
+  };
+}
+
 // ─── Main evaluation ─────────────────────────────────────────────
 
 export async function evaluateAlerts(args: {
@@ -236,7 +263,7 @@ export async function evaluateAlerts(args: {
     const momentum = isMomentumBuyZone(d, weeklyMacdBullish);
     if (momentum.pass) {
       const buyScore = scoreBuy(d, weeklyMacdBullish);
-      alerts.push({
+      alerts.push(withVolume({
         label: 'Momentum Buy',
         timeframe: 'MTF',
         at: now,
@@ -247,7 +274,7 @@ export async function evaluateAlerts(args: {
           `Score: ${buyScore.score.toFixed(1)}/4.0`,
         ],
         indicators: indicatorSnapshot,
-      });
+      }, d));
     } else {
       // Check Early Buy Setup (lower tier)
       const buyScore = scoreBuy(d, weeklyMacdBullish);
@@ -261,14 +288,14 @@ export async function evaluateAlerts(args: {
         if (buyScore.timingRisk) {
           why.push('⚠ Timing risk: StochRSI overheated/rolling over');
         }
-        alerts.push({
+        alerts.push(withVolume({
           label: 'Early Buy Setup',
           timeframe: '1D',
           at: now,
           confidence: Math.min(1, buyScore.score / 4),
           why,
           indicators: indicatorSnapshot,
-        });
+        }, d));
       }
     }
   }
@@ -276,7 +303,7 @@ export async function evaluateAlerts(args: {
   // Rare Accumulation (cycle alert — independent of momentum)
   const accum = checkRareAccumulation(d);
   if (accum.pass) {
-    alerts.push({
+    alerts.push(withVolume({
       label: 'Rare Accumulation',
       timeframe: '1D',
       at: now,
@@ -286,14 +313,14 @@ export async function evaluateAlerts(args: {
         `StochRSI K/D: ${fmt(d.stochK)}/${fmt(d.stochD)}`,
       ],
       indicators: indicatorSnapshot,
-    });
+    }, d));
   }
 
   // ─── SELL ALERTS ───────────────────────────────────────────────
 
   const sellScore = scoreSell(d);
   if (sellScore.score >= 3.0) {
-    alerts.push({
+    alerts.push(withVolume({
       label: 'Great Sell',
       timeframe: '1D',
       at: now,
@@ -305,9 +332,9 @@ export async function evaluateAlerts(args: {
         `Score: ${sellScore.score.toFixed(1)}/3.5`,
       ],
       indicators: indicatorSnapshot,
-    });
+    }, d));
   } else if (sellScore.score >= 2.0) {
-    alerts.push({
+    alerts.push(withVolume({
       label: 'Good Sell',
       timeframe: '1D',
       at: now,
@@ -319,7 +346,7 @@ export async function evaluateAlerts(args: {
         `Score: ${sellScore.score.toFixed(1)}/3.5`,
       ],
       indicators: indicatorSnapshot,
-    });
+    }, d));
   }
 
   return {

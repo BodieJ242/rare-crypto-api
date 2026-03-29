@@ -2,7 +2,7 @@ import type { Timeframe, Venue, CanonSymbol } from '../core/timeframes.js';
 import { tfWeight } from '../core/timeframes.js';
 import type { MacdSettings } from '../core/macd.js';
 import { computeMacd, crossesDown, crossesUp } from '../core/macd.js';
-import { rsi, mfi, stochRsi, sma, type DailyIndicators } from '../core/indicators.js';
+import { rsi, mfi, stochRsi, sma, VOLUME_SMA_LEN, VOLUME_THRESHOLD, type DailyIndicators } from '../core/indicators.js';
 import { getOhlcv } from './market.js';
 import type { Candle } from '../venues/types.js';
 
@@ -106,6 +106,15 @@ export async function computeCmUltMacdMtf(args: {
       const stoch = stochRsi(closes, 14, 3, 3);
       const sma200Arr = sma(closes, 200);
 
+      // Volume confirmation: 20-period SMA of volume
+      const volSmaArr = sma(vols, VOLUME_SMA_LEN);
+      const currentVol = vols[i] ?? 0;
+      const currentVolAvg = volSmaArr[i] ?? NaN;
+      const volumeRatio = isFinite(currentVolAvg) && currentVolAvg > 0
+        ? currentVol / currentVolAvg
+        : NaN;
+      const highVolume = isFinite(volumeRatio) && volumeRatio >= VOLUME_THRESHOLD;
+
       dailyIndicators = {
         rsi: rsiArr[i] ?? NaN,
         mfi: mfiArr[i] ?? NaN,
@@ -121,6 +130,10 @@ export async function computeCmUltMacdMtf(args: {
         histPrev,
         macdLine: macdNow,
         signalLine: sigNow,
+        volume: currentVol,
+        volumeAvg: currentVolAvg,
+        volumeRatio,
+        highVolume,
       };
     }
   }
