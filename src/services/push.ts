@@ -39,8 +39,6 @@ async function getApnsToken(): Promise<string> {
     .setIssuedAt(now)
     .sign(key);
 
-  console.log(`[push] APNs JWT — kid=${APNS_KEY_ID} iss=${APNS_TEAM_ID} topic=${APNS_TOPIC} host=${APNS_HOST}`);
-
   cachedToken = { jwt, expiresAt: now + 50 * 60 };
   return jwt;
 }

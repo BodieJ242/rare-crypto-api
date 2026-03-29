@@ -18,7 +18,7 @@ const env = {
   JWT_ISSUER: process.env.JWT_ISSUER || 'rare-crypto-api',
   JWT_AUDIENCE: process.env.JWT_AUDIENCE || 'co.rarecrypto.rarecrypto',
   JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '90d',
-  ENABLE_AUTH_DEV: String(process.env.ENABLE_AUTH_DEV || 'true').toLowerCase() === 'true',
+  ENABLE_AUTH_DEV: String(process.env.ENABLE_AUTH_DEV || 'false').toLowerCase() === 'true',
   APPLE_AUDIENCE_IOS: process.env.APPLE_AUDIENCE_IOS || 'co.rarecrypto.rarecrypto',
   APPLE_ISSUER: process.env.APPLE_ISSUER || 'https://appleid.apple.com',
 };
@@ -270,7 +270,8 @@ app.post('/v1/alerts/run-batch', async (req) => {
   const lookbackCross = s?.lookbackCross ?? 3;
 
   const results = [] as any[];
-  for (const symbol of w.symbols) {
+  for (let i = 0; i < w.symbols.length; i++) {
+    const symbol = w.symbols[i];
     const out = await alertsEvaluate({
       venue: w.venue,
       symbol: symbol as any,
@@ -281,6 +282,11 @@ app.post('/v1/alerts/run-batch', async (req) => {
       limit: 500,
     });
     results.push({ symbol, alerts: out.alerts, scores: out.scores, resolvedSymbol: out.resolvedSymbol, usedQuote: out.usedQuote, fallbackUsed: out.fallbackUsed });
+
+    // Throttle between symbols to avoid Coinbase rate limits
+    if (i < w.symbols.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, 400));
+    }
   }
 
   return { userId: uid, results };
